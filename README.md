@@ -4,7 +4,7 @@
 **Student 2**: Victor Odoux, 261099183   
 **Student 3**: Thomas Cottereau, 261083741  
 **Student 4**: Bora Denizasan,  
-**Student 5**: Le-Tao Li,  
+**Student 5**: Le-Tao Li 261041500,  
 
 ## Quick Explanation
 This project implements and compares multiple Computer Vision approaches for classifying images in the Dogs vs. Cats dataset (Part 1). Using the best-performing classifier from Part 1, we then build a detection/localization pipeline that predicts dog bounding boxes on the Stanford Dogs dataset (Part 2), evaluated using Intersection over Union (IoU).
