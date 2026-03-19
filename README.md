@@ -28,20 +28,21 @@ cd ecse415-final-project
 
 Create the folders used by the pipeline:
 ```bash
-mkdir -p data/kaggle
-mkdir -p data/stanford_dogs
+mkdir -p data/part1/data/kaggle
+mkdir -p data/part2/data/Annotation
+mkdir -p data/part2/data/Images
 ```
 
-Download + unzip the Kaggle Dogs vs. Cats dataset (Part 1) into `data/kaggle/`:
+Download + unzip the Kaggle Dogs vs. Cats dataset (Part 1) into `data/part1/data/kaggle/`:
 ```bash
-kaggle competitions download -c ecse-415-winter-2026-dog-vs-cat-classification -p data/kaggle --force
-unzip -o data/kaggle/ecse-415-winter-2026-dog-vs-cat-classification.zip -d data/kaggle
+kaggle competitions download -c ecse-415-winter-2026-dog-vs-cat-classification -p data/part1/data/kaggle --force
+unzip -o data/part1/data/kaggle/ecse-415-winter-2026-dog-vs-cat-classification.zip -d data/part1/data/kaggle
 ```
 
 Download the Stanford Dogs dataset (Part 2) from:
 https://mcgill-my.sharepoint.com/:f:/g/personal/benjamin_beggs_mcgill_ca/IgCI5Z5WAg3lSJC13KKnyQncAWATdWR2qGs7ZW8ste28FlY?e=nzlWUn
 
-Save/extract it into `data/stanford_dogs/` (this is where the Part 2 localization pipeline expects the data).
+Save/extract it into `data/part2/data/` (so it provides the `Images/` and `Annotation/` folders).
 
 Create a local virtual environment and install dependencies:
 ```bash
@@ -52,22 +53,19 @@ pip install -r requirements.txt
 
 ## Repo Structure
 This repository is organized as:
-- `src/`: reusable pipeline modules (dataset loading, preprocessing, classifiers, evaluation, localization orchestration, Kaggle submission generation, visualization helpers)
+- `src/`: shared utilities imported by the notebooks
 - `notebooks/`: end-to-end experiment runner / analysis notebooks (each notebook corresponds to one step of the project pipeline)
-- `data/`: input data downloads (gitignored contents); `data/kaggle/` contains the Kaggle competition files (e.g., downloaded `*.zip`, including `train.zip`/`test.zip`, plus extracted `train/` and `test/` images as needed), and `data/stanford_dogs/` contains the Stanford Dogs images + annotation files used for localization/IoU evaluation
-- `outputs/`: generated artifacts (figures, trained models, and Kaggle submission CSV outputs)
+- `data/part1/data/kaggle/`: Dogs vs. Cats classification dataset (Kaggle `train/` + `test/` + `sample_submission.csv`)
+- `data/part2/data/Annotation/` and `data/part2/data/Images/`: Stanford Dogs images + bounding-box annotation folders (localization/IoU evaluation)
+- `outputs/figures/`, `outputs/models/`, `outputs/localization/`: generated artifacts
 - `docs/`: project instruction PDFs
 
-Notebooks currently included (by responsibility):
-- `01-data-setup-and-processing.ipynb`: dataset download/extraction + preprocessing setup
-- `02-feature-based-model-optionA copy.ipynb`: classifier for Option A (feature-based: handcrafted features + classical classifier)
-- `03-appearace-based-model-optionB.ipynb`: classifier for Option B (appearance-based / PCA + classifier)
-- `04-deep-learning-model-optionC copy.ipynb`: classifier for Option C (CNN fine-tuning / deep learning)
-- `05-analysis-and-evaluation copy.ipynb`: confusion matrices + quantitative evaluation + method comparison
-- `06-kaggle-submission-generation.ipynb`: run best classifier on the unlabeled Kaggle public test set and create the leaderboard CSV
-- `07-localization-pipeline.ipynb`: dog detection/localization pipeline using the best classifier
-- `08-localization-analysis-and-evaluation copy.ipynb`: localization quantitative evaluation (IoU) + qualitative analysis
-- `09-failure-success-analysis.ipynb`: successes/failures visualization + discussion
+Notebooks currently included:
+- `01-feature-based-model-optionA.ipynb`: classifier for Option A (feature-based)
+- `02-appearace-based-model-optionB.ipynb`: classifier for Option B (appearance-based / PCA + classifier)
+- `03-deep-learning-model-optionC.ipynb`: classifier for Option C (deep learning / CNN)
+- `04-analysis-and-evaluation.ipynb`: confusion matrices + quantitative evaluation + method comparison
+- `05-localization.ipynb`: dog detection/localization pipeline on Stanford Dogs + qualitative evaluation
 
 ## Workflow Explanation
 The workflow is designed so the notebooks orchestrate the pipeline, while the core logic lives in `src/`:
@@ -94,7 +92,7 @@ Presentation deliverable (separately):
 Expected outputs written by the pipeline:
 - `outputs/figures/`: plots/visualizations (confusion matrices, sample predictions, IoU examples, bbox overlays)
 - `outputs/models/`: saved trained models / checkpoints (as applicable)
-- `outputs/kaggle-submission/`: generated Kaggle prediction CSV(s)
+- `outputs/localization/`: localization artifacts (bbox overlays, IoU evaluation) and any prediction CSVs generated for submission (if applicable)
 
 ## Docs
 - `docs/final-project-instructions.pdf`: full project specification (classification benchmark + detection/localization requirements + scoring + submission rules)
