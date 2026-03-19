@@ -1,0 +1,60 @@
+# Data
+/data/*/data/
+
+#
+# Basic Python ignore rules
+#
+
+# Byte-compiled / optimized / DLLs
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Env files (never commit secrets)
+.env
+.env.*
+*.env
+
+# Tooling caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDEs / editors
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+
