@@ -1,6 +1,6 @@
 # ECSE 415 Final Project
 ## Student names
-**Student 1**: Clara Ghenassia,   
+**Student 1**: Clara Ghenassia, 261096490  
 **Student 2**: Victor Odoux, 261099183   
 **Student 3**: Thomas Cottereau, 261083741  
 **Student 4**: Bora Denizasan,  
