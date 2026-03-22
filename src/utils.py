@@ -241,7 +241,7 @@ def generate_submission_csv(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame({"id": ids, "label": predictions})
     df = df.sort_values("id").reset_index(drop=True)
-    df.to_csv(output_path, index=False)
+    df.to_csv(output_path, index=False, lineterminator="\n")
     return output_path
 
 
