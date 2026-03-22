@@ -26,23 +26,40 @@ git clone <YOUR_GIT_URL> ecse415-final-project
 cd ecse415-final-project
 ```
 
-Create the folders used by the pipeline:
+Create the required dataset folders in the repository:
 ```bash
-mkdir -p data/part1/data/kaggle
-mkdir -p data/part2/data/Annotation
-mkdir -p data/part2/data/Images
+mkdir -p data/part1/ecse-415-winter-2026-dog-vs-cat-classification
+mkdir -p data/part2/Stanford\ Dog\ Dataset/Annotation
+mkdir -p data/part2/Stanford\ Dog\ Dataset/Images
 ```
 
-Download + unzip the Kaggle Dogs vs. Cats dataset (Part 1) into `data/part1/data/kaggle/`:
+Download + unzip the Kaggle Dogs vs. Cats dataset (Part 1) into `data/part1/ecse-415-winter-2026-dog-vs-cat-classification/`:
 ```bash
-kaggle competitions download -c ecse-415-winter-2026-dog-vs-cat-classification -p data/part1/data/kaggle --force
-unzip -o data/part1/data/kaggle/ecse-415-winter-2026-dog-vs-cat-classification.zip -d data/part1/data/kaggle
+kaggle competitions download -c ecse-415-winter-2026-dog-vs-cat-classification -p data/part1/ecse-415-winter-2026-dog-vs-cat-classification --force
+unzip -o data/part1/ecse-415-winter-2026-dog-vs-cat-classification/ecse-415-winter-2026-dog-vs-cat-classification.zip -d data/part1/ecse-415-winter-2026-dog-vs-cat-classification
 ```
 
 Download the Stanford Dogs dataset (Part 2) from:
 https://mcgill-my.sharepoint.com/:f:/g/personal/benjamin_beggs_mcgill_ca/IgCI5Z5WAg3lSJC13KKnyQncAWATdWR2qGs7ZW8ste28FlY?e=nzlWUn
 
-Save/extract it into `data/part2/data/` (so it provides the `Images/` and `Annotation/` folders).
+Save/extract it into `data/part2/Stanford Dog Dataset/` (so it provides the `Images/` and `Annotation/` folders).
+
+Required folder policy used by the code:
+- Part 1 must exist exactly at: `data/part1/ecse-415-winter-2026-dog-vs-cat-classification`
+- Part 2 must exist exactly at: `data/part2/Stanford Dog Dataset`
+- Part 2 must provide both folders: `data/part2/Stanford Dog Dataset/Images` and `data/part2/Stanford Dog Dataset/Annotation`
+
+Use these centralized paths in notebooks/scripts (avoid hardcoded relative data paths):
+```python
+from src.config import (
+	PART1_KAGGLE_DIR,
+	PART2_IMAGES_DIR,
+	PART2_ANNOTATIONS_DIR,
+	validate_data_layout,
+)
+
+validate_data_layout()
+```
 
 Create a local virtual environment and install dependencies:
 ```bash
@@ -55,8 +72,9 @@ pip install -r requirements.txt
 This repository is organized as:
 - `src/`: shared utilities imported by the notebooks
 - `notebooks/`: end-to-end experiment runner / analysis notebooks (each notebook corresponds to one step of the project pipeline)
-- `data/part1/data/kaggle/`: Dogs vs. Cats classification dataset (Kaggle `train/` + `test/` + `sample_submission.csv`)
-- `data/part2/data/Annotation/` and `data/part2/data/Images/`: Stanford Dogs images + bounding-box annotation folders (localization/IoU evaluation)
+- `src/config.py`: centralized dataset path config
+- `data/part1/ecse-415-winter-2026-dog-vs-cat-classification/`: Dogs vs. Cats classification dataset (Kaggle `train/` + `test/` + `sample_submission.csv`, local only)
+- `data/part2/Stanford Dog Dataset/Annotation/` and `data/part2/Stanford Dog Dataset/Images/`: Stanford Dogs images + bounding-box annotation folders (local only)
 - `outputs/figures/`, `outputs/models/`, `outputs/localization/`: generated artifacts
 - `docs/`: project instruction PDFs
 
