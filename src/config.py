@@ -19,9 +19,28 @@ PART2_DATASET_FOLDER = "Stanford Dog Dataset"
 
 # Canonical dataset directories used throughout the notebooks/scripts.
 PART1_KAGGLE_DIR = DATA_ROOT / "part1" / PART1_DATASET_FOLDER
+PART1_TRAIN_DIR = PART1_KAGGLE_DIR / "train" / "train"
+PART1_TEST_DIR = PART1_KAGGLE_DIR / "test" / "test"
+PART1_SAMPLE_SUBMISSION = PART1_KAGGLE_DIR / "sample_submission.csv"
+
 PART2_DATASET_DIR = DATA_ROOT / "part2" / PART2_DATASET_FOLDER
 PART2_IMAGES_DIR = PART2_DATASET_DIR / "Images"
 PART2_ANNOTATIONS_DIR = PART2_DATASET_DIR / "Annotation"
+
+# Output directories.
+OUTPUTS_DIR = REPO_ROOT / "outputs"
+FIGURES_DIR = OUTPUTS_DIR / "figures"
+MODELS_DIR = OUTPUTS_DIR / "models"
+LOCALIZATION_DIR = OUTPUTS_DIR / "localization"
+
+# Image sizes.
+IMG_SIZE_CLASSICAL = (128, 128)  # For feature-based / PCA methods
+IMG_SIZE_CNN = (224, 224)        # For pre-trained CNN fine-tuning
+
+# Label mapping.
+CLASS_NAMES = ["cat", "dog"]
+LABEL_MAP = {"cat": 0, "dog": 1}
+LABEL_MAP_INV = {0: "cat", 1: "dog"}
 
 
 def get_data_paths() -> dict[str, Path]:

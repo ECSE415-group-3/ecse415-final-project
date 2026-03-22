@@ -71,8 +71,11 @@ pip install -r requirements.txt
 ## Repo Structure
 This repository is organized as:
 - `src/`: shared utilities imported by the notebooks
+  - `config.py`: centralized dataset paths, image-size constants, label mappings, and output directory paths
+  - `utils.py`: data loading, train/test splitting, feature extraction (HOG, LBP), PCA, PyTorch dataloader helpers, and Kaggle submission CSV generation
+  - `evaluation.py`: metric computation (accuracy, precision, recall, F1), confusion matrix, and multi-model comparison table
+  - `visualization.py`: plotting helpers — confusion-matrix heatmaps, sample-prediction grids, model-comparison bar charts, and training-history curves
 - `notebooks/`: end-to-end experiment runner / analysis notebooks (each notebook corresponds to one step of the project pipeline)
-- `src/config.py`: centralized dataset path config
 - `data/part1/ecse-415-winter-2026-dog-vs-cat-classification/`: Dogs vs. Cats classification dataset (Kaggle `train/` + `test/` + `sample_submission.csv`, local only)
 - `data/part2/Stanford Dog Dataset/Annotation/` and `data/part2/Stanford Dog Dataset/Images/`: Stanford Dogs images + bounding-box annotation folders (local only)
 - `outputs/figures/`, `outputs/models/`, `outputs/localization/`: generated artifacts
@@ -84,6 +87,47 @@ Notebooks currently included:
 - `03-deep-learning-model-optionC.ipynb`: classifier for Option C (deep learning / CNN)
 - `04-analysis-and-evaluation.ipynb`: confusion matrices + quantitative evaluation + method comparison
 - `05-localization.ipynb`: dog detection/localization pipeline on Stanford Dogs + qualitative evaluation
+
+## `src/` Module API
+
+### `config.py` — Constants
+| Constant | Value / Description |
+|---|---|
+| `PART1_TRAIN_DIR` | `data/part1/…/train/train` (cats/ and dogs/ subdirs) |
+| `PART1_TEST_DIR` | `data/part1/…/test/test` (unlabeled Kaggle test images) |
+| `PART1_SAMPLE_SUBMISSION` | Path to `sample_submission.csv` |
+| `FIGURES_DIR` / `MODELS_DIR` / `LOCALIZATION_DIR` | Output subdirectories under `outputs/` |
+| `IMG_SIZE_CLASSICAL` | `(128, 128)` — for HOG/LBP/PCA methods |
+| `IMG_SIZE_CNN` | `(224, 224)` — for pre-trained CNN fine-tuning |
+| `CLASS_NAMES` | `["cat", "dog"]` |
+| `LABEL_MAP` / `LABEL_MAP_INV` | `{"cat": 0, "dog": 1}` and reverse |
+
+### `utils.py` — Data & Features
+| Function | Purpose |
+|---|---|
+| `load_labeled_images(img_size, grayscale, max_samples)` | Load cat/dog training images, resize, normalize to [0,1] |
+| `load_test_images(img_size, grayscale)` | Load unlabeled Kaggle test images with numeric ids |
+| `split_data(X, y, test_size, random_state)` | Stratified train/internal-test split |
+| `extract_hog_features(images, …)` | HOG descriptors for Option A |
+| `extract_lbp_features(images, …)` | LBP histogram features for Option A |
+| `apply_pca(X_train, X_test, n_components)` | Fit PCA on train, transform both — for Option B |
+| `generate_submission_csv(ids, predictions, output_path)` | Write Kaggle-format CSV |
+| `get_pytorch_dataloaders(X_train, y_train, X_val, y_val, …)` | ImageNet-normalized DataLoaders for Option C |
+
+### `evaluation.py` — Metrics
+| Function | Purpose |
+|---|---|
+| `compute_metrics(y_true, y_pred)` | Returns dict with accuracy, precision, recall, F1 |
+| `compute_confusion_matrix(y_true, y_pred)` | 2×2 confusion matrix array |
+| `compare_models(results)` | DataFrame comparing metrics across all classifiers |
+
+### `visualization.py` — Plots
+| Function | Purpose |
+|---|---|
+| `plot_confusion_matrix(cm, …, save_path)` | Annotated seaborn heatmap |
+| `plot_sample_predictions(images, y_true, y_pred, …, save_path)` | Grid with green/red labels |
+| `plot_model_comparison(results, save_path)` | Grouped bar chart of metrics |
+| `plot_training_history(history, save_path)` | Train/val loss & accuracy curves |
 
 ## Workflow Explanation
 The workflow is designed so the notebooks orchestrate the pipeline, while the core logic lives in `src/`:
