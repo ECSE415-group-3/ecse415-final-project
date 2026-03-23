@@ -264,21 +264,18 @@ def get_pytorch_dataloaders(
     """
     import torch
     from torch.utils.data import DataLoader, TensorDataset
-    from torchvision import transforms
 
-    normalize = transforms.Normalize(
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225],
-    )
+    _mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+    _std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 
     def _prepare(X: np.ndarray, y: np.ndarray) -> TensorDataset:
-        # (N, H, W, 3) -> (N, 3, H, W)
-        t = torch.from_numpy(X).permute(0, 3, 1, 2).float()
+        # (N, H, W, 3) -> (N, 3, H, W); .clone() to avoid mutating the source array
+        t = torch.from_numpy(X).permute(0, 3, 1, 2).float().clone()
         if (t.shape[2], t.shape[3]) != img_size:
             t = torch.nn.functional.interpolate(
                 t, size=img_size, mode="bilinear", align_corners=False
             )
-        t = torch.stack([normalize(img) for img in t])
+        t.sub_(_mean).div_(_std)
         labels = torch.from_numpy(y).long()
         return TensorDataset(t, labels)
 
