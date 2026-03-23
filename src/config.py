@@ -14,7 +14,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_ROOT = REPO_ROOT / "data"
 
-PART1_DATASET_FOLDER = "ecse-415-winter-2026-dog-vs-cat-classification"
+PART1_DATASET_FOLDER = "data/kaggle"
 PART2_DATASET_FOLDER = "Stanford Dog Dataset"
 
 # Canonical dataset directories used throughout the notebooks/scripts.
