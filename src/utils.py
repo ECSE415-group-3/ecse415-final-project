@@ -256,10 +256,15 @@ def get_pytorch_dataloaders(
     y_val: np.ndarray,
     batch_size: int = 32,
     img_size: tuple[int, int] = (224, 224),
+    normalize_train: bool = True,
 ):
     """Wrap numpy arrays into PyTorch DataLoaders with ImageNet normalization.
 
     Images are expected as float32 [0, 1] in (N, H, W, 3) format.
+    When *normalize_train* is False the training tensors are left in [0, 1]
+    so that augmentation transforms (ColorJitter, etc.) can be applied first
+    inside the training loop, followed by manual normalization.
+    Validation data is always normalized.
     Returns (train_loader, val_loader).
     """
     import torch
@@ -268,19 +273,42 @@ def get_pytorch_dataloaders(
     _mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
     _std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 
-    def _prepare(X: np.ndarray, y: np.ndarray) -> TensorDataset:
-        # (N, H, W, 3) -> (N, 3, H, W); .clone() to avoid mutating the source array
+    def _to_tensor(X: np.ndarray, do_normalize: bool) -> torch.Tensor:
         t = torch.from_numpy(X).permute(0, 3, 1, 2).float().clone()
         if (t.shape[2], t.shape[3]) != img_size:
             t = torch.nn.functional.interpolate(
                 t, size=img_size, mode="bilinear", align_corners=False
             )
-        t.sub_(_mean).div_(_std)
-        labels = torch.from_numpy(y).long()
-        return TensorDataset(t, labels)
+        if do_normalize:
+            t.sub_(_mean).div_(_std)
+        return t
 
-    train_ds = _prepare(X_train, y_train)
-    val_ds = _prepare(X_val, y_val)
+    train_t = _to_tensor(X_train, do_normalize=normalize_train)
+    val_t = _to_tensor(X_val, do_normalize=True)
+
+    train_ds = TensorDataset(train_t, torch.from_numpy(y_train).long())
+    val_ds = TensorDataset(val_t, torch.from_numpy(y_val).long())
+
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
     return train_loader, val_loader
+
+
+def build_gpu_augmentation(img_size: tuple[int, int] = (224, 224)):
+    """Return a transform pipeline that runs on GPU-resident batches (NCHW).
+
+    Expects images in [0, 1] range. The pipeline applies augmentation first,
+    then ImageNet normalization as the final step.
+    Call this from the training notebook and apply the returned callable
+    to each image *after* moving the batch to the device.
+    """
+    from torchvision import transforms as T
+
+    return T.Compose([
+        T.RandomHorizontalFlip(),
+        T.RandomRotation(15),
+        T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05),
+        T.RandomResizedCrop(img_size, scale=(0.8, 1.0)),
+        T.RandomErasing(p=0.1),
+        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
