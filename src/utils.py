@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 from skimage.feature import hog, local_binary_pattern
 from tqdm import tqdm
 
@@ -35,7 +36,11 @@ def load_labeled_images(
     img_size: tuple[int, int] = IMG_SIZE_CLASSICAL,
     grayscale: bool = False,
     max_samples: int | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
+    return_ids: bool = False,
+) -> (
+    tuple[np.ndarray, np.ndarray]
+    | tuple[np.ndarray, np.ndarray, np.ndarray]
+):
     """Load labeled cat/dog images from the Part 1 training directory.
 
     Parameters
@@ -46,14 +51,18 @@ def load_labeled_images(
         If True, load as single-channel grayscale.
     max_samples : int or None
         Cap the number of images per class (useful for quick debugging).
+    return_ids : bool
+        If True, also return filename stems (e.g. ``cat.12``) in dataset order.
 
     Returns
     -------
     X : np.ndarray, float32, shape (N, H, W) or (N, H, W, 3), values in [0, 1]
     y : np.ndarray, int, shape (N,) — 0 for cat, 1 for dog
+    ids : np.ndarray, optional, shape (N,), dtype object — filename stems without extension
     """
     images: list[np.ndarray] = []
     labels: list[int] = []
+    ids: list[str] = []
 
     for class_name, label in LABEL_MAP.items():
         class_dir = PART1_TRAIN_DIR / f"{class_name}s"
@@ -71,9 +80,12 @@ def load_labeled_images(
                 img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             images.append(img)
             labels.append(label)
+            ids.append(p.stem)
 
     X = np.array(images, dtype=np.float32) / 255.0
     y = np.array(labels, dtype=np.int64)
+    if return_ids:
+        return X, y, np.array(ids, dtype=object)
     return X, y
 
 
@@ -194,7 +206,7 @@ def apply_pca(
     X_test: np.ndarray,
     n_components: int = 100,
 ) -> tuple[np.ndarray, np.ndarray, PCA]:
-    """Flatten images, fit PCA on training data, and transform both splits.
+    """Flatten images or feature rows, fit PCA on training data, transform both splits.
 
     Returns
     -------
@@ -211,6 +223,17 @@ def apply_pca(
     X_train_pca = pca.fit_transform(X_train_flat)
     X_test_pca = pca.transform(X_test_flat)
     return X_train_pca, X_test_pca, pca
+
+
+def standardize_features(
+    X_train: np.ndarray,
+    X_test: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, StandardScaler]:
+    """Fit ``StandardScaler`` on training rows only; transform train and test."""
+    scaler = StandardScaler()
+    X_train_s = scaler.fit_transform(X_train)
+    X_test_s = scaler.transform(X_test)
+    return X_train_s, X_test_s, scaler
 
 
 # ---------------------------------------------------------------------------
