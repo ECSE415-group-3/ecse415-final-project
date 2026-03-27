@@ -108,11 +108,22 @@ def plot_model_comparison(
     import pandas as pd
 
     df = pd.DataFrame(results).T
-    ax = df.plot.bar(figsize=(8, 5), rot=0)
+
+    # Scale figure width to keep configuration labels readable.
+    n_models = len(df.index)
+    max_label_len = max((len(str(label)) for label in df.index), default=0)
+    fig_width = max(10, min(22, n_models * 0.9))
+    rotate_labels = n_models > 8 or max_label_len > 14
+    label_rotation = 35 if rotate_labels else 0
+
+    ax = df.plot.bar(figsize=(fig_width, 5), rot=label_rotation)
     ax.set_ylim(0, 1.05)
     ax.set_ylabel("Score")
     ax.set_title("Model Comparison")
     ax.legend(loc="lower right")
+    if rotate_labels:
+        ax.tick_params(axis="x", labelsize=8)
+        ax.set_xticklabels(ax.get_xticklabels(), ha="right")
     fig = ax.get_figure()
     fig.tight_layout()
 
