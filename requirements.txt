@@ -25,4 +25,4 @@ torch>=2.0
 torchvision>=0.15
 
 # Optional: if you download Kaggle data via the Kaggle API
-kaggle>=1.6
+# kaggle>=1.6
