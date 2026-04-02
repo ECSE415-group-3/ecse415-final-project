@@ -1,0 +1,54 @@
+---
+description: Comment style — simple, aligned with assignment/PDF instructions (Thomas)
+globs: "**/*.{ipynb,py}"
+alwaysApply: true
+---
+
+# Comment style (assignment-aligned)
+
+Comments should help you **stay on track with the assignment**. They state *what* this block does in terms of the spec, not *how* in implementation detail.
+
+## Principles (apply to every comment)
+
+1. **One line.** One short sentence per logical step. No paragraphs, no "Step 1 / Step 2".
+2. **Tie to the instructions.** Use wording that echoes the assignment or PDF when possible (e.g. "Print dimensions", "Handle [0,1] float or [0,255] uint8").
+3. **Instruction-like.** Prefer phrasing that could appear in a spec: "Convert X to Y", "Print …", "Compute …", "Display …".
+4. **No implementation narrative.** Don't explain *why* the library does something or *how* it works unless the assignment asks for it. Don't use "sanity check", "optional", "so that …", or step-by-step story.
+5. **Optional technical detail only when it clarifies.** If the spec mentions types or shapes (e.g. "H×W array"), one short note is fine (e.g. "2D float64, shape H×W"). Otherwise keep it to what the block accomplishes.
+
+## How to write a new comment
+
+- Look at the assignment bullet for this part. Turn it into a short imperative: "Load …", "Compute …", "Display …", "Handle …".
+- If the spec uses a exact phrase (e.g. "preserve aspect ratio", "luminance-weighted formula"), reuse it.
+- If you're describing a formula or condition from the PDF, paraphrase in one line.
+
+## Do / Don't (general patterns)
+
+**Do:**
+- Comment the *purpose* of the next few lines in spec language.
+- Use the same terms as the assignment (dimensions, grayscale, resize, filter, etc.).
+
+**Don't:**
+- Number steps ("Step 1:", "Step 2:") or write a tutorial.
+- Explain library behaviour ("OpenCV returns BGR", "Matplotlib expects RGB") unless the assignment requires it—then one short line is enough.
+- Use vague or meta wording ("keep same style", "sanity check", "optional") when the spec has a concrete phrase ("Handle [0,1] float or [0,255] uint8 ranges correctly").
+
+## Example (pattern only)
+
+```python
+# Good: one line, matches spec and pdf instructions wording
+# Load a color image
+# Convert BGR to RGB.
+# Print dimensions (width, height)
+# Luminance-weighted formula to convert to grayscale
+# Handle [0, 1] float or [0, 255] uint8 ranges correctly
+# Resize so max(height, width) = 512
+# Display original, grayscale, and resized side by side
+
+# Bad: narrative, implementation detail, step numbering
+# Step 1: Load the image from disk. OpenCV returns BGR uint8 in [0,255].
+# Optional sanity check: show the image so we can verify it loaded.
+# keep same style/range as input (formula is linear so we just clip at the end)
+```
+
+Apply the principles above to any new comment; the examples are there to show the pattern, not to be copied literally.
