@@ -280,6 +280,10 @@ def get_pytorch_dataloaders(
     batch_size: int = 32,
     img_size: tuple[int, int] = (224, 224),
     normalize_train: bool = True,
+    num_workers: int = 0,
+    pin_memory: bool = False,
+    persistent_workers: bool = False,
+    prefetch_factor: int | None = 2,
 ):
     """Wrap numpy arrays into PyTorch DataLoaders with ImageNet normalization.
 
@@ -289,6 +293,9 @@ def get_pytorch_dataloaders(
     inside the training loop, followed by manual normalization.
     Validation data is always normalized.
     Returns (train_loader, val_loader).
+
+    Optional DataLoader kwargs (defaults match the original single-threaded behaviour):
+    *num_workers*, *pin_memory*, *persistent_workers*, *prefetch_factor*.
     """
     import torch
     from torch.utils.data import DataLoader, TensorDataset
@@ -312,8 +319,21 @@ def get_pytorch_dataloaders(
     train_ds = TensorDataset(train_t, torch.from_numpy(y_train).long())
     val_ds = TensorDataset(val_t, torch.from_numpy(y_val).long())
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+    def _loader_kwargs(shuffle: bool) -> dict:
+        kw: dict = {
+            "batch_size": batch_size,
+            "shuffle": shuffle,
+            "pin_memory": pin_memory,
+        }
+        if num_workers > 0:
+            kw["num_workers"] = num_workers
+            kw["persistent_workers"] = persistent_workers
+            if prefetch_factor is not None:
+                kw["prefetch_factor"] = prefetch_factor
+        return kw
+
+    train_loader = DataLoader(train_ds, **_loader_kwargs(True))
+    val_loader = DataLoader(val_ds, **_loader_kwargs(False))
     return train_loader, val_loader
 
 
