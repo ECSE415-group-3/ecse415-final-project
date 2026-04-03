@@ -60,30 +60,44 @@ def load_labeled_images(
     y : np.ndarray, int, shape (N,) — 0 for cat, 1 for dog
     ids : np.ndarray, optional, shape (N,), dtype object — filename stems without extension
     """
-    images: list[np.ndarray] = []
-    labels: list[int] = []
-    ids: list[str] = []
-
+    entries: list[tuple[Path, int]] = []
     for class_name, label in LABEL_MAP.items():
         class_dir = PART1_TRAIN_DIR / f"{class_name}s"
         paths = sorted(class_dir.glob("*.jpg"))
         if max_samples is not None:
             paths = paths[:max_samples]
+        for p in paths:
+            entries.append((p, label))
 
-        for p in tqdm(paths, desc=f"Loading {class_name}s"):
-            flag = cv2.IMREAD_GRAYSCALE if grayscale else cv2.IMREAD_COLOR
-            img = cv2.imread(str(p), flag)
-            if img is None:
-                continue
-            img = cv2.resize(img, (img_size[1], img_size[0]))
-            if not grayscale:
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            images.append(img)
-            labels.append(label)
-            ids.append(p.stem)
+    n_paths = len(entries)
+    h, w = img_size[0], img_size[1]
+    if grayscale:
+        X = np.empty((n_paths, h, w), dtype=np.float32)
+    else:
+        X = np.empty((n_paths, h, w, 3), dtype=np.float32)
+    y = np.empty(n_paths, dtype=np.int64)
+    ids: list[str] = []
 
-    X = np.array(images, dtype=np.float32) / 255.0
-    y = np.array(labels, dtype=np.int64)
+    j = 0
+    for p, label in tqdm(entries, desc="Loading labeled images"):
+        flag = cv2.IMREAD_GRAYSCALE if grayscale else cv2.IMREAD_COLOR
+        img = cv2.imread(str(p), flag)
+        if img is None:
+            continue
+        img = cv2.resize(img, (w, h))
+        if not grayscale:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        X[j] = img.astype(np.float32) / 255.0
+        y[j] = label
+        ids.append(p.stem)
+        j += 1
+
+    if j < n_paths:
+        X = np.ascontiguousarray(X[:j])
+        y = np.ascontiguousarray(y[:j])
+    else:
+        X = np.ascontiguousarray(X)
+        y = np.ascontiguousarray(y)
     if return_ids:
         return X, y, np.array(ids, dtype=object)
     return X, y
@@ -101,21 +115,31 @@ def load_test_images(
     ids : list[int] — numeric image ids parsed from filenames, sorted ascending
     """
     paths = sorted(PART1_TEST_DIR.glob("*.jpg"), key=lambda p: int(p.stem))
-    images: list[np.ndarray] = []
+    n_paths = len(paths)
+    h, w = img_size[0], img_size[1]
+    if grayscale:
+        X = np.empty((n_paths, h, w), dtype=np.float32)
+    else:
+        X = np.empty((n_paths, h, w, 3), dtype=np.float32)
     ids: list[int] = []
 
+    j = 0
     for p in tqdm(paths, desc="Loading test images"):
         flag = cv2.IMREAD_GRAYSCALE if grayscale else cv2.IMREAD_COLOR
         img = cv2.imread(str(p), flag)
         if img is None:
             continue
-        img = cv2.resize(img, (img_size[1], img_size[0]))
+        img = cv2.resize(img, (w, h))
         if not grayscale:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        images.append(img)
+        X[j] = img.astype(np.float32) / 255.0
         ids.append(int(p.stem))
+        j += 1
 
-    X = np.array(images, dtype=np.float32) / 255.0
+    if j < n_paths:
+        X = np.ascontiguousarray(X[:j])
+    else:
+        X = np.ascontiguousarray(X)
     return X, ids
 
 
