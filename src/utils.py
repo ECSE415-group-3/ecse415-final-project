@@ -8,12 +8,14 @@ generation for the Dogs vs. Cats classification pipeline (Part 1).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Sequence
 
 import cv2
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed, effective_n_jobs
 from sklearn.model_selection import train_test_split
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
@@ -21,6 +23,7 @@ from skimage.feature import hog, local_binary_pattern
 from tqdm import tqdm
 
 from src.config import (
+    OUTPUTS_DIR,
     PART1_TRAIN_DIR,
     PART1_TEST_DIR,
     LABEL_MAP,
@@ -32,11 +35,41 @@ from src.config import (
 # Data loading
 # ---------------------------------------------------------------------------
 
+
+def _resize_image_to_shape(
+    img: np.ndarray,
+    out_h: int,
+    out_w: int,
+    grayscale: bool,
+    letterbox: bool,
+) -> np.ndarray:
+    """Resize to (out_h, out_w); stretch, or preserve aspect ratio with centered padding."""
+    if not letterbox:
+        return cv2.resize(img, (out_w, out_h))
+
+    in_h, in_w = img.shape[:2]
+    scale = min(out_w / in_w, out_h / in_h)
+    new_w = max(1, int(round(in_w * scale)))
+    new_h = max(1, int(round(in_h * scale)))
+    resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+    pad_x = (out_w - new_w) // 2
+    pad_y = (out_h - new_h) // 2
+
+    if grayscale:
+        canvas = np.zeros((out_h, out_w), dtype=img.dtype)
+    else:
+        canvas = np.zeros((out_h, out_w, 3), dtype=img.dtype)
+
+    canvas[pad_y : pad_y + new_h, pad_x : pad_x + new_w] = resized
+    return canvas
+
+
 def load_labeled_images(
     img_size: tuple[int, int] = IMG_SIZE_CLASSICAL,
     grayscale: bool = False,
     max_samples: int | None = None,
     return_ids: bool = False,
+    letterbox: bool = False,
 ) -> (
     tuple[np.ndarray, np.ndarray]
     | tuple[np.ndarray, np.ndarray, np.ndarray]
@@ -47,6 +80,8 @@ def load_labeled_images(
     ----------
     img_size : tuple
         Target (height, width) for resizing.
+    letterbox : bool
+        If True, preserve aspect ratio and pad to ``img_size``; else stretch to ``img_size``.
     grayscale : bool
         If True, load as single-channel grayscale.
     max_samples : int or None
@@ -75,7 +110,13 @@ def load_labeled_images(
             img = cv2.imread(str(p), flag)
             if img is None:
                 continue
-            img = cv2.resize(img, (img_size[1], img_size[0]))
+            img = _resize_image_to_shape(
+                img,
+                img_size[0],
+                img_size[1],
+                grayscale,
+                letterbox,
+            )
             if not grayscale:
                 img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             images.append(img)
@@ -89,9 +130,139 @@ def load_labeled_images(
     return X, y
 
 
+def _collect_labeled_paths(max_samples: int | None) -> tuple[list[Path], list[int], list[str]]:
+    paths_flat: list[Path] = []
+    labels_flat: list[int] = []
+    ids_flat: list[str] = []
+    for class_name, label in LABEL_MAP.items():
+        class_dir = PART1_TRAIN_DIR / f"{class_name}s"
+        path_list = sorted(class_dir.glob("*.jpg"))
+        if max_samples is not None:
+            path_list = path_list[:max_samples]
+        for p in path_list:
+            paths_flat.append(p)
+            labels_flat.append(label)
+            ids_flat.append(p.stem)
+    return paths_flat, labels_flat, ids_flat
+
+
+def _memmap_meta_matches(
+    meta: dict,
+    img_size: tuple[int, int],
+    grayscale: bool,
+    max_samples: int | None,
+    letterbox: bool,
+) -> bool:
+    if tuple(meta["img_size"]) != tuple(img_size):
+        return False
+    if bool(meta["grayscale"]) != grayscale:
+        return False
+    if bool(meta.get("letterbox", False)) != letterbox:
+        return False
+    meta_ms = meta.get("max_samples")
+    if meta_ms != max_samples:
+        return False
+    return True
+
+
+def load_labeled_images_memmap(
+    img_size: tuple[int, int] = IMG_SIZE_CLASSICAL,
+    grayscale: bool = False,
+    max_samples: int | None = None,
+    return_ids: bool = False,
+    cache_dir: Path | None = None,
+    rebuild: bool = False,
+    letterbox: bool = False,
+) -> (
+    tuple[np.ndarray, np.ndarray]
+    | tuple[np.ndarray, np.ndarray, np.ndarray]
+):
+    """Labeled images as a float32 on-disk memmap (same API as ``load_labeled_images``)."""
+    if cache_dir is None:
+        cache_dir = OUTPUTS_DIR / "cache" / "part1_labeled_memmap"
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    data_path = cache_dir / "X_memmap.dat"
+    meta_path = cache_dir / "meta.json"
+    y_path = cache_dir / "y.npy"
+    ids_path = cache_dir / "ids.npy"
+
+    h, w = img_size[0], img_size[1]
+
+    use_cache = (
+        not rebuild
+        and data_path.is_file()
+        and meta_path.is_file()
+        and y_path.is_file()
+    )
+    meta: dict | None = None
+    if use_cache:
+        with open(meta_path, encoding="utf-8") as f:
+            meta = json.load(f)
+        if not _memmap_meta_matches(meta, img_size, grayscale, max_samples, letterbox):
+            use_cache = False
+        elif return_ids and not ids_path.is_file():
+            use_cache = False
+
+    if use_cache and meta is not None:
+        shape = tuple(meta["shape"])
+        X = np.memmap(data_path, dtype=np.float32, mode="r", shape=shape)
+        y = np.load(y_path)
+        if return_ids:
+            train_ids = np.load(ids_path, allow_pickle=True)
+            return X, y, train_ids
+        return X, y
+
+    paths_flat, labels_flat, ids_flat = _collect_labeled_paths(max_samples)
+    n = len(paths_flat)
+    if grayscale:
+        shape = (n, h, w)
+    else:
+        shape = (n, h, w, 3)
+
+    mm = np.memmap(data_path, dtype=np.float32, mode="w+", shape=shape)
+    flag = cv2.IMREAD_GRAYSCALE if grayscale else cv2.IMREAD_COLOR
+    desc = "Building labeled memmap cache"
+    for i, p in enumerate(tqdm(paths_flat, desc=desc)):
+        img = cv2.imread(str(p), flag)
+        if img is None:
+            raise RuntimeError(f"Could not read image: {p}")
+        img = _resize_image_to_shape(img, h, w, grayscale, letterbox)
+        if not grayscale:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        row = img.astype(np.float32) / 255.0
+        mm[i, ...] = row
+
+    mm.flush()
+    del mm
+
+    meta_out = {
+        "shape": list(shape),
+        "dtype": "float32",
+        "img_size": list(img_size),
+        "grayscale": grayscale,
+        "max_samples": max_samples,
+        "letterbox": letterbox,
+    }
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta_out, f, indent=2)
+
+    y_arr = np.array(labels_flat, dtype=np.int64)
+    np.save(y_path, y_arr)
+    ids_arr = np.array(ids_flat, dtype=object)
+    np.save(ids_path, ids_arr, allow_pickle=True)
+
+    X = np.memmap(data_path, dtype=np.float32, mode="r", shape=shape)
+    if return_ids:
+        return X, y_arr, ids_arr
+    return X, y_arr
+
+
 def load_test_images(
     img_size: tuple[int, int] = IMG_SIZE_CLASSICAL,
     grayscale: bool = False,
+    letterbox: bool = False,
 ) -> tuple[np.ndarray, list[int]]:
     """Load unlabeled Kaggle test images.
 
@@ -109,7 +280,13 @@ def load_test_images(
         img = cv2.imread(str(p), flag)
         if img is None:
             continue
-        img = cv2.resize(img, (img_size[1], img_size[0]))
+        img = _resize_image_to_shape(
+            img,
+            img_size[0],
+            img_size[1],
+            grayscale,
+            letterbox,
+        )
         if not grayscale:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         images.append(img)
@@ -195,6 +372,132 @@ def extract_lbp_features(
         )
         feats.append(hist)
     return np.array(feats, dtype=np.float32)
+
+
+def _combined_hog_hsv_for_chunk(
+    images: np.ndarray,
+    hog_orientations: int,
+    hog_cells_per_block: tuple[int, int],
+    hog_scales_ppc: list,
+    hsv_bins: int,
+    show_progress: bool,
+    progress_desc: str,
+    include_lbp: bool = False,
+    lbp_n_points: int = 24,
+    lbp_radius: int = 3,
+) -> np.ndarray:
+    """One row per image: multi-scale HOG concatenated with HSV histogram."""
+    n = images.shape[0]
+    rows: list[np.ndarray] = []
+    if show_progress:
+        idx_iter = tqdm(range(n), desc=progress_desc)
+    else:
+        idx_iter = range(n)
+
+    for i in idx_iter:
+        img = images[i]
+        gray = _to_gray_uint8(img)
+        hog_parts: list[np.ndarray] = []
+        for ppc in hog_scales_ppc:
+            fd = hog(
+                gray,
+                orientations=hog_orientations,
+                pixels_per_cell=ppc,
+                cells_per_block=hog_cells_per_block,
+                feature_vector=True,
+            )
+            hog_parts.append(fd)
+        hog_row = np.concatenate(hog_parts)
+
+        rgb_u8 = (img * 255).astype(np.uint8)
+        hsv = cv2.cvtColor(rgb_u8, cv2.COLOR_RGB2HSV)
+        hist_h, _ = np.histogram(
+            hsv[..., 0], bins=hsv_bins, range=(0, 180), density=True
+        )
+        hist_s, _ = np.histogram(
+            hsv[..., 1], bins=hsv_bins, range=(0, 256), density=True
+        )
+        hist_v, _ = np.histogram(
+            hsv[..., 2], bins=hsv_bins, range=(0, 256), density=True
+        )
+        hsv_row = np.concatenate([hist_h, hist_s, hist_v])
+
+        parts: list[np.ndarray] = [hog_row, hsv_row]
+        if include_lbp:
+            lbp = local_binary_pattern(
+                gray, lbp_n_points, lbp_radius, method="uniform"
+            )
+            n_bins_lbp = lbp_n_points + 2
+            hist_lbp, _ = np.histogram(
+                lbp.ravel(), bins=n_bins_lbp, range=(0, n_bins_lbp), density=True
+            )
+            parts.append(hist_lbp)
+
+        rows.append(np.concatenate(parts))
+
+    return np.array(rows, dtype=np.float32)
+
+
+def extract_multiscale_hog_hsv_features(
+    images: np.ndarray,
+    hog_orientations: int = 9,
+    hog_cells_per_block: tuple[int, int] = (2, 2),
+    hog_scales_ppc: list | None = None,
+    hsv_bins: int = 12,
+    n_jobs: int = 1,
+    include_lbp: bool = False,
+    lbp_n_points: int = 24,
+    lbp_radius: int = 3,
+) -> np.ndarray:
+    """Multi-scale HOG + HSV histogram per image (skimage HOG is CPU-only).
+
+    Use ``n_jobs=-1`` to run chunks in parallel processes (uses all cores).
+    """
+    if hog_scales_ppc is None:
+        hog_scales_ppc = [(8, 8), (16, 16)]
+
+    n = images.shape[0]
+    if n_jobs == 1:
+        return _combined_hog_hsv_for_chunk(
+            images,
+            hog_orientations,
+            hog_cells_per_block,
+            hog_scales_ppc,
+            hsv_bins,
+            show_progress=True,
+            progress_desc="Extracting HOG+HSV (single process)",
+            include_lbp=include_lbp,
+            lbp_n_points=lbp_n_points,
+            lbp_radius=lbp_radius,
+        )
+
+    n_jobs_eff = effective_n_jobs(n_jobs)
+    splits = np.array_split(images, n_jobs_eff, axis=0)
+    chunks_in = []
+    for split in splits:
+        if split.shape[0] > 0:
+            chunks_in.append(split)
+
+    tasks = []
+    for chunk in chunks_in:
+        tasks.append(
+            delayed(_combined_hog_hsv_for_chunk)(
+                chunk,
+                hog_orientations,
+                hog_cells_per_block,
+                hog_scales_ppc,
+                hsv_bins,
+                False,
+                "",
+                include_lbp,
+                lbp_n_points,
+                lbp_radius,
+            )
+        )
+
+    parts = Parallel(n_jobs=n_jobs_eff, backend="loky")(tasks)
+
+    return np.vstack(parts)
 
 
 # ---------------------------------------------------------------------------
