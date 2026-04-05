@@ -1,0 +1,11 @@
+# GPU SVC (resolve_svc → cuml.svm.SVC). Install: pip install -r requirements-gpu.txt
+#
+# IMPORTANT: In the *same* venv as PyTorch, the RAPIDS wheel must match PyTorch's CUDA major
+# (pip packages cuda-toolkit / cuda-bindings conflict otherwise).
+#   - PyTorch +cu12 / cu121 / cu124 → use cuml-cu12
+#   - PyTorch +cu13 (e.g. torch 2.11 manylinux) → use cuml-cu13
+# Safer alternative: separate venv for RAPIDS vs PyTorch.
+# See https://docs.rapids.ai/install
+
+--extra-index-url https://pypi.nvidia.com
+cuml-cu13==26.2.*

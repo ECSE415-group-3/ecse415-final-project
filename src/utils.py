@@ -9,13 +9,16 @@ generation for the Dogs vs. Cats classification pipeline (Part 1).
 from __future__ import annotations
 
 import json
+import os
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 import cv2
 import numpy as np
 import pandas as pd
-from joblib import Parallel, delayed, effective_n_jobs
+from joblib import effective_n_jobs
 from sklearn.model_selection import train_test_split
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
@@ -95,38 +98,46 @@ def load_labeled_images(
     y : np.ndarray, int, shape (N,) — 0 for cat, 1 for dog
     ids : np.ndarray, optional, shape (N,), dtype object — filename stems without extension
     """
-    images: list[np.ndarray] = []
-    labels: list[int] = []
-    ids: list[str] = []
-
+    path_order: list[tuple[Path, int]] = []
     for class_name, label in LABEL_MAP.items():
         class_dir = PART1_TRAIN_DIR / f"{class_name}s"
         paths = sorted(class_dir.glob("*.jpg"))
         if max_samples is not None:
             paths = paths[:max_samples]
+        for p in paths:
+            path_order.append((p, label))
 
-        for p in tqdm(paths, desc=f"Loading {class_name}s"):
-            flag = cv2.IMREAD_GRAYSCALE if grayscale else cv2.IMREAD_COLOR
-            img = cv2.imread(str(p), flag)
-            if img is None:
-                continue
-            img = _resize_image_to_shape(
-                img,
-                img_size[0],
-                img_size[1],
-                grayscale,
-                letterbox,
-            )
-            if not grayscale:
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            images.append(img)
-            labels.append(label)
-            ids.append(p.stem)
+    h, w = img_size[0], img_size[1]
+    n_paths = len(path_order)
+    flag = cv2.IMREAD_GRAYSCALE if grayscale else cv2.IMREAD_COLOR
 
-    X = np.array(images, dtype=np.float32) / 255.0
-    y = np.array(labels, dtype=np.int64)
+    if grayscale:
+        X = np.empty((n_paths, h, w), dtype=np.float32)
+    else:
+        X = np.empty((n_paths, h, w, 3), dtype=np.float32)
+
+    labels = np.empty(n_paths, dtype=np.int64)
+    ids_out: list[str] = []
+    write_i = 0
+
+    for p, label in tqdm(path_order, desc="Loading labeled train images"):
+        img = cv2.imread(str(p), flag)
+        if img is None:
+            continue
+        img = _resize_image_to_shape(img, h, w, grayscale, letterbox)
+        if not grayscale:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        X[write_i, ...] = img.astype(np.float32) / 255.0
+        labels[write_i] = label
+        if return_ids:
+            ids_out.append(p.stem)
+        write_i += 1
+
+    if write_i < n_paths:
+        X = X[:write_i].copy()
+    y = labels[:write_i].copy()
     if return_ids:
-        return X, y, np.array(ids, dtype=object)
+        return X, y, np.array(ids_out, dtype=object)
     return X, y
 
 
@@ -178,8 +189,11 @@ def load_labeled_images_memmap(
     | tuple[np.ndarray, np.ndarray, np.ndarray]
 ):
     """Labeled images as a float32 on-disk memmap (same API as ``load_labeled_images``)."""
+    h, w = img_size[0], img_size[1]
     if cache_dir is None:
-        cache_dir = OUTPUTS_DIR / "cache" / "part1_labeled_memmap"
+        ms_key = max_samples if max_samples is not None else "all"
+        key = f"{h}x{w}_lb{int(letterbox)}_g{int(grayscale)}_ms{ms_key}"
+        cache_dir = OUTPUTS_DIR / "cache" / "part1_labeled_memmap" / key
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -187,8 +201,6 @@ def load_labeled_images_memmap(
     meta_path = cache_dir / "meta.json"
     y_path = cache_dir / "y.npy"
     ids_path = cache_dir / "ids.npy"
-
-    h, w = img_size[0], img_size[1]
 
     use_cache = (
         not rebuild
@@ -272,28 +284,122 @@ def load_test_images(
     ids : list[int] — numeric image ids parsed from filenames, sorted ascending
     """
     paths = sorted(PART1_TEST_DIR.glob("*.jpg"), key=lambda p: int(p.stem))
-    images: list[np.ndarray] = []
-    ids: list[int] = []
+    h, w = img_size[0], img_size[1]
+    n_paths = len(paths)
+    flag = cv2.IMREAD_GRAYSCALE if grayscale else cv2.IMREAD_COLOR
+
+    if grayscale:
+        X = np.empty((n_paths, h, w), dtype=np.float32)
+    else:
+        X = np.empty((n_paths, h, w, 3), dtype=np.float32)
+
+    ids_out: list[int] = []
+    write_i = 0
 
     for p in tqdm(paths, desc="Loading test images"):
-        flag = cv2.IMREAD_GRAYSCALE if grayscale else cv2.IMREAD_COLOR
         img = cv2.imread(str(p), flag)
         if img is None:
             continue
-        img = _resize_image_to_shape(
-            img,
-            img_size[0],
-            img_size[1],
-            grayscale,
-            letterbox,
-        )
+        img = _resize_image_to_shape(img, h, w, grayscale, letterbox)
         if not grayscale:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        images.append(img)
-        ids.append(int(p.stem))
+        X[write_i, ...] = img.astype(np.float32) / 255.0
+        ids_out.append(int(p.stem))
+        write_i += 1
 
-    X = np.array(images, dtype=np.float32) / 255.0
-    return X, ids
+    if write_i < n_paths:
+        X = X[:write_i].copy()
+    return X, ids_out
+
+
+def _test_memmap_meta_matches(
+    meta: dict,
+    img_size: tuple[int, int],
+    grayscale: bool,
+    letterbox: bool,
+) -> bool:
+    if tuple(meta["img_size"]) != tuple(img_size):
+        return False
+    if bool(meta["grayscale"]) != grayscale:
+        return False
+    if bool(meta.get("letterbox", False)) != letterbox:
+        return False
+    return True
+
+
+def load_test_images_memmap(
+    img_size: tuple[int, int] = IMG_SIZE_CLASSICAL,
+    grayscale: bool = False,
+    letterbox: bool = False,
+    cache_dir: Path | None = None,
+    rebuild: bool = False,
+) -> tuple[np.ndarray, list[int]]:
+    """Kaggle test images as float32 on-disk memmap (same layout as ``load_test_images``)."""
+    h, w = img_size[0], img_size[1]
+    if cache_dir is None:
+        key = f"{h}x{w}_lb{int(letterbox)}_g{int(grayscale)}"
+        cache_dir = OUTPUTS_DIR / "cache" / "part1_test_memmap" / key
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    data_path = cache_dir / "X_memmap.dat"
+    meta_path = cache_dir / "meta.json"
+    ids_path = cache_dir / "ids.npy"
+
+    paths = sorted(PART1_TEST_DIR.glob("*.jpg"), key=lambda p: int(p.stem))
+    n = len(paths)
+
+    use_cache = not rebuild and data_path.is_file() and meta_path.is_file() and ids_path.is_file()
+    meta: dict | None = None
+    if use_cache:
+        with open(meta_path, encoding="utf-8") as f:
+            meta = json.load(f)
+        if not _test_memmap_meta_matches(meta, img_size, grayscale, letterbox):
+            use_cache = False
+
+    if use_cache and meta is not None:
+        shape = tuple(meta["shape"])
+        X = np.memmap(data_path, dtype=np.float32, mode="r", shape=shape)
+        ids_arr = np.load(ids_path)
+        return X, [int(x) for x in ids_arr.tolist()]
+
+    if grayscale:
+        shape = (n, h, w)
+    else:
+        shape = (n, h, w, 3)
+
+    mm = np.memmap(data_path, dtype=np.float32, mode="w+", shape=shape)
+    flag = cv2.IMREAD_GRAYSCALE if grayscale else cv2.IMREAD_COLOR
+    ids_row: list[int] = []
+
+    for i, p in enumerate(tqdm(paths, desc="Building test memmap cache")):
+        img = cv2.imread(str(p), flag)
+        if img is None:
+            raise RuntimeError(f"Could not read image: {p}")
+        img = _resize_image_to_shape(img, h, w, grayscale, letterbox)
+        if not grayscale:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        mm[i, ...] = img.astype(np.float32) / 255.0
+        ids_row.append(int(p.stem))
+
+    mm.flush()
+    del mm
+
+    meta_out = {
+        "shape": list(shape),
+        "dtype": "float32",
+        "img_size": list(img_size),
+        "grayscale": grayscale,
+        "letterbox": letterbox,
+    }
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta_out, f, indent=2)
+
+    ids_arr = np.array(ids_row, dtype=np.int64)
+    np.save(ids_path, ids_arr)
+
+    X = np.memmap(data_path, dtype=np.float32, mode="r", shape=shape)
+    return X, [int(x) for x in ids_arr.tolist()]
 
 
 # ---------------------------------------------------------------------------
@@ -316,27 +422,80 @@ def split_data(
 # Feature extraction
 # ---------------------------------------------------------------------------
 
+
+def _feat_extract_max_procs() -> int:
+    """Upper bound on feature-extraction processes (spawn + large array IPC)."""
+    raw = os.environ.get("FEAT_EXTRACT_MAX_PROCS", "8")
+    try:
+        v = int(raw)
+    except ValueError:
+        v = 8
+
+    return max(1, v)
+
+
+def _pool_worker_limit_blas_threads() -> None:
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+    os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+
+
+def _spawn_pool_map(
+    fn: Callable[[tuple], np.ndarray],
+    arg_tuples: list[tuple],
+    max_workers: int,
+) -> list[np.ndarray]:
+    """Run ``fn`` on each tuple via ``spawn`` processes (avoids fork + native libs)."""
+    n = len(arg_tuples)
+    if n == 0:
+        return []
+
+    cap = _feat_extract_max_procs()
+    workers = min(max(1, max_workers), cap, n)
+    ctx = mp.get_context("spawn")
+    with ProcessPoolExecutor(
+        max_workers=workers,
+        mp_context=ctx,
+        initializer=_pool_worker_limit_blas_threads,
+    ) as ex:
+        return list(ex.map(fn, arg_tuples))
+
+
 def _to_gray_uint8(img: np.ndarray) -> np.ndarray:
     """Convert a float32 [0,1] image to uint8 grayscale."""
+    img = np.asarray(img, dtype=np.float32)
     if img.ndim == 3:
-        img = np.dot(img[..., :3], [0.2989, 0.5870, 0.1140])
-    return (img * 255).astype(np.uint8)
+        r = img[..., 0]
+        g = img[..., 1]
+        b = img[..., 2]
+        gray = 0.2989 * r + 0.5870 * g + 0.1140 * b
+    else:
+        gray = img
+
+    return (gray * 255).astype(np.uint8)
 
 
-def extract_hog_features(
+def _hog_rows_for_chunk(
     images: np.ndarray,
-    pixels_per_cell: tuple[int, int] = (8, 8),
-    cells_per_block: tuple[int, int] = (2, 2),
-    orientations: int = 9,
+    pixels_per_cell: tuple[int, int],
+    cells_per_block: tuple[int, int],
+    orientations: int,
+    show_progress: bool,
+    progress_desc: str,
 ) -> np.ndarray:
-    """Compute HOG feature vectors for a batch of images.
+    """HOG rows for a slice of images (skimage; used by parallel workers)."""
+    images = np.ascontiguousarray(np.asarray(images, dtype=np.float32))
+    n = images.shape[0]
+    rows: list[np.ndarray] = []
+    if show_progress:
+        idx_iter = tqdm(range(n), desc=progress_desc)
+    else:
+        idx_iter = range(n)
 
-    Returns
-    -------
-    features : np.ndarray, shape (n_samples, n_hog_features)
-    """
-    feats: list[np.ndarray] = []
-    for img in tqdm(images, desc="Extracting HOG"):
+    for i in idx_iter:
+        img = images[i]
         gray = _to_gray_uint8(img)
         fd = hog(
             gray,
@@ -345,8 +504,65 @@ def extract_hog_features(
             cells_per_block=cells_per_block,
             feature_vector=True,
         )
-        feats.append(fd)
-    return np.array(feats, dtype=np.float32)
+        rows.append(fd)
+
+    return np.array(rows, dtype=np.float32)
+
+
+def _hog_rows_star(args: tuple) -> np.ndarray:
+    return _hog_rows_for_chunk(*args)
+
+
+def extract_hog_features(
+    images: np.ndarray,
+    pixels_per_cell: tuple[int, int] = (8, 8),
+    cells_per_block: tuple[int, int] = (2, 2),
+    orientations: int = 9,
+    n_jobs: int = 1,
+) -> np.ndarray:
+    """Compute HOG feature vectors for a batch of images.
+
+    Use ``n_jobs=-1`` for parallel ``spawn`` processes (safer than fork with skimage/OpenCV).
+    Parallelism is capped by env ``FEAT_EXTRACT_MAX_PROCS`` (default 8) to limit RAM and worker count.
+
+    Returns
+    -------
+    features : np.ndarray, shape (n_samples, n_hog_features)
+    """
+    if n_jobs == 1:
+        return _hog_rows_for_chunk(
+            images,
+            pixels_per_cell,
+            cells_per_block,
+            orientations,
+            True,
+            "Extracting HOG",
+        )
+
+    n_jobs_eff = effective_n_jobs(n_jobs)
+    n_splits = min(n_jobs_eff, _feat_extract_max_procs())
+    splits = np.array_split(images, n_splits, axis=0)
+    chunks_in = []
+    for split in splits:
+        if split.shape[0] > 0:
+            chunks_in.append(split)
+
+    arg_tuples: list[tuple] = []
+    for chunk in chunks_in:
+        arg_tuples.append(
+            (
+                chunk,
+                pixels_per_cell,
+                cells_per_block,
+                orientations,
+                False,
+                "",
+            )
+        )
+
+    parts = _spawn_pool_map(_hog_rows_star, arg_tuples, n_splits)
+
+    return np.vstack(parts)
 
 
 def extract_lbp_features(
@@ -387,6 +603,7 @@ def _combined_hog_hsv_for_chunk(
     lbp_radius: int = 3,
 ) -> np.ndarray:
     """One row per image: multi-scale HOG concatenated with HSV histogram."""
+    images = np.ascontiguousarray(np.asarray(images, dtype=np.float32))
     n = images.shape[0]
     rows: list[np.ndarray] = []
     if show_progress:
@@ -438,6 +655,10 @@ def _combined_hog_hsv_for_chunk(
     return np.array(rows, dtype=np.float32)
 
 
+def _combined_hog_hsv_star(args: tuple) -> np.ndarray:
+    return _combined_hog_hsv_for_chunk(*args)
+
+
 def extract_multiscale_hog_hsv_features(
     images: np.ndarray,
     hog_orientations: int = 9,
@@ -451,7 +672,8 @@ def extract_multiscale_hog_hsv_features(
 ) -> np.ndarray:
     """Multi-scale HOG + HSV histogram per image (skimage HOG is CPU-only).
 
-    Use ``n_jobs=-1`` to run chunks in parallel processes (uses all cores).
+    Use ``n_jobs=-1`` to run chunks in parallel ``spawn`` processes (safer than fork with native libs).
+    Parallelism is capped by env ``FEAT_EXTRACT_MAX_PROCS`` (default 8) to limit RAM and worker count.
     """
     if hog_scales_ppc is None:
         hog_scales_ppc = [(8, 8), (16, 16)]
@@ -472,16 +694,17 @@ def extract_multiscale_hog_hsv_features(
         )
 
     n_jobs_eff = effective_n_jobs(n_jobs)
-    splits = np.array_split(images, n_jobs_eff, axis=0)
+    n_splits = min(n_jobs_eff, _feat_extract_max_procs())
+    splits = np.array_split(images, n_splits, axis=0)
     chunks_in = []
     for split in splits:
         if split.shape[0] > 0:
             chunks_in.append(split)
 
-    tasks = []
+    arg_tuples: list[tuple] = []
     for chunk in chunks_in:
-        tasks.append(
-            delayed(_combined_hog_hsv_for_chunk)(
+        arg_tuples.append(
+            (
                 chunk,
                 hog_orientations,
                 hog_cells_per_block,
@@ -495,7 +718,7 @@ def extract_multiscale_hog_hsv_features(
             )
         )
 
-    parts = Parallel(n_jobs=n_jobs_eff, backend="loky")(tasks)
+    parts = _spawn_pool_map(_combined_hog_hsv_star, arg_tuples, n_splits)
 
     return np.vstack(parts)
 
@@ -638,3 +861,41 @@ def build_gpu_augmentation(img_size: tuple[int, int] = (224, 224)):
         T.RandomErasing(p=0.1),
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
+
+
+def resolve_svc(
+    use_cuda: bool,
+    label_prefix: str = "SVC",
+    prefer_gpu: bool = True,
+):
+    """Pick sklearn SVC (CPU) or cuML SVC (GPU) when CUDA is active and RAPIDS is installed.
+
+    Set ``prefer_gpu=False`` to force sklearn SVC even if CUDA is available.
+    """
+    from sklearn.svm import SVC as SklearnSVC
+
+    if not prefer_gpu:
+        print("{}: sklearn (CPU) [prefer_gpu=False]".format(label_prefix))
+        return SklearnSVC, SklearnSVC, "sklearn (CPU)"
+
+    if not use_cuda:
+        print("{}: sklearn (CPU)".format(label_prefix))
+        return SklearnSVC, SklearnSVC, "sklearn (CPU)"
+    try:
+        from cuml.svm import SVC as CuSVC
+
+        print("{}: cuml (GPU)".format(label_prefix))
+        return CuSVC, SklearnSVC, "cuml (GPU)"
+    except Exception as exc:
+        print("cuml SVC unavailable ({}); using sklearn".format(exc))
+        print("{}: sklearn (CPU)".format(label_prefix))
+        return SklearnSVC, SklearnSVC, "sklearn (CPU)"
+
+
+def clone_svc(est, sklearn_svc_class):
+    """sklearn.clone for CPU SVC; fresh hyperparams for cuML (avoids clone quirks)."""
+    from sklearn.base import clone
+
+    if est.__class__ is sklearn_svc_class:
+        return clone(est)
+    return type(est)(**est.get_params(deep=False))
