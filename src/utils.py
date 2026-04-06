@@ -806,14 +806,22 @@ def get_pytorch_dataloaders(
     batch_size: int = 32,
     img_size: tuple[int, int] = (224, 224),
     normalize_train: bool = True,
+    num_workers: int = 0,
+    pin_memory: bool = False,
+    persistent_workers: bool = False,
+    prefetch_factor: int | None = None,
+    lazy_from_numpy: bool = False,
 ):
     """Wrap numpy arrays into PyTorch DataLoaders with ImageNet normalization.
+
+    Optional *num_workers* / *pin_memory* / *prefetch_factor* speed up host-to-device transfers.
 
     Images are expected as float32 [0, 1] in (N, H, W, 3) format.
     When *normalize_train* is False the training tensors are left in [0, 1]
     so that augmentation transforms (ColorJitter, etc.) can be applied first
     inside the training loop, followed by manual normalization.
     Validation data is always normalized.
+    Set *lazy_from_numpy* True to index memmap/numpy per batch (no full-dataset tensor clone).
     Returns (train_loader, val_loader).
     """
     import torch
@@ -823,23 +831,87 @@ def get_pytorch_dataloaders(
     _std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 
     def _to_tensor(X: np.ndarray, do_normalize: bool) -> torch.Tensor:
-        t = torch.from_numpy(X).permute(0, 3, 1, 2).float().clone()
+        t = torch.from_numpy(X).permute(0, 3, 1, 2).float()
         if (t.shape[2], t.shape[3]) != img_size:
             t = torch.nn.functional.interpolate(
                 t, size=img_size, mode="bilinear", align_corners=False
             )
         if do_normalize:
-            t.sub_(_mean).div_(_std)
+            t = (t - _mean) / _std
         return t
 
-    train_t = _to_tensor(X_train, do_normalize=normalize_train)
-    val_t = _to_tensor(X_val, do_normalize=True)
+    if lazy_from_numpy:
+        from torch.utils.data import Dataset
 
-    train_ds = TensorDataset(train_t, torch.from_numpy(y_train).long())
-    val_ds = TensorDataset(val_t, torch.from_numpy(y_val).long())
+        class _LazyNumpyImageDataset(Dataset):
+            """One image per __getitem__ from memmap/numpy — avoids cloning the full split into RAM."""
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+            def __init__(
+                self,
+                X: np.ndarray,
+                y: np.ndarray,
+                size: tuple[int, int],
+                do_norm: bool,
+            ) -> None:
+                self.X = X
+                self.y = torch.as_tensor(np.asarray(y), dtype=torch.long)
+                self.size = size
+                self.do_norm = do_norm
+                self._mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+                self._std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+
+            def __len__(self) -> int:
+                return int(self.X.shape[0])
+
+            def __getitem__(self, idx: int):
+                img = self.X[idx]
+                x = torch.from_numpy(np.ascontiguousarray(img)).permute(2, 0, 1).float()
+                h, w = self.size[0], self.size[1]
+                if x.shape[1] != h or x.shape[2] != w:
+                    x = torch.nn.functional.interpolate(
+                        x.unsqueeze(0),
+                        size=(h, w),
+                        mode="bilinear",
+                        align_corners=False,
+                    ).squeeze(0)
+
+                if self.do_norm:
+                    x = (x - self._mean) / self._std
+
+                return x, self.y[idx]
+
+        train_ds = _LazyNumpyImageDataset(
+            X_train, y_train, img_size, normalize_train
+        )
+        val_ds = _LazyNumpyImageDataset(X_val, y_val, img_size, True)
+    else:
+        train_t = _to_tensor(X_train, do_normalize=normalize_train)
+        val_t = _to_tensor(X_val, do_normalize=True)
+
+        train_ds = TensorDataset(train_t, torch.from_numpy(y_train).long())
+        val_ds = TensorDataset(val_t, torch.from_numpy(y_val).long())
+
+    train_kw: dict = {
+        "batch_size": batch_size,
+        "shuffle": True,
+        "pin_memory": pin_memory,
+    }
+    val_kw: dict = {
+        "batch_size": batch_size,
+        "shuffle": False,
+        "pin_memory": pin_memory,
+    }
+    if num_workers > 0:
+        train_kw["num_workers"] = num_workers
+        val_kw["num_workers"] = num_workers
+        train_kw["persistent_workers"] = persistent_workers
+        val_kw["persistent_workers"] = persistent_workers
+        if prefetch_factor is not None:
+            train_kw["prefetch_factor"] = prefetch_factor
+            val_kw["prefetch_factor"] = prefetch_factor
+
+    train_loader = DataLoader(train_ds, **train_kw)
+    val_loader = DataLoader(val_ds, **val_kw)
     return train_loader, val_loader
 
 
