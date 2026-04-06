@@ -811,6 +811,8 @@ def get_pytorch_dataloaders(
     persistent_workers: bool = False,
     prefetch_factor: int | None = None,
     lazy_from_numpy: bool = False,
+    train_row_indices: np.ndarray | None = None,
+    val_row_indices: np.ndarray | None = None,
 ):
     """Wrap numpy arrays into PyTorch DataLoaders with ImageNet normalization.
 
@@ -822,6 +824,8 @@ def get_pytorch_dataloaders(
     inside the training loop, followed by manual normalization.
     Validation data is always normalized.
     Set *lazy_from_numpy* True to index memmap/numpy per batch (no full-dataset tensor clone).
+    With *lazy_from_numpy*, pass *train_row_indices* / *val_row_indices* (into *X_train* / *X_val*)
+    to read rows by index and avoid materializing a full split (e.g. ``X[train_idx]`` copies the split).
     Returns (train_loader, val_loader).
     """
     import torch
@@ -852,8 +856,14 @@ def get_pytorch_dataloaders(
                 y: np.ndarray,
                 size: tuple[int, int],
                 do_norm: bool,
+                row_indices: np.ndarray | None = None,
             ) -> None:
                 self.X = X
+                self.row_indices = (
+                    None
+                    if row_indices is None
+                    else np.asarray(row_indices, dtype=np.int64)
+                )
                 self.y = torch.as_tensor(np.asarray(y), dtype=torch.long)
                 self.size = size
                 self.do_norm = do_norm
@@ -861,11 +871,21 @@ def get_pytorch_dataloaders(
                 self._std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
             def __len__(self) -> int:
+                if self.row_indices is not None:
+                    return int(self.row_indices.shape[0])
                 return int(self.X.shape[0])
 
             def __getitem__(self, idx: int):
-                img = self.X[idx]
-                x = torch.from_numpy(np.ascontiguousarray(img)).permute(2, 0, 1).float()
+                if self.row_indices is not None:
+                    row = int(self.row_indices[idx])
+                    img = self.X[row]
+                else:
+                    img = self.X[idx]
+                # Memmap slices are read-only; PyTorch needs a writable buffer for from_numpy.
+                img_hwc = np.ascontiguousarray(img, dtype=np.float32)
+                if not img_hwc.flags.writeable:
+                    img_hwc = img_hwc.copy()
+                x = torch.from_numpy(img_hwc).permute(2, 0, 1).float()
                 h, w = self.size[0], self.size[1]
                 if x.shape[1] != h or x.shape[2] != w:
                     x = torch.nn.functional.interpolate(
@@ -880,10 +900,18 @@ def get_pytorch_dataloaders(
 
                 return x, self.y[idx]
 
-        train_ds = _LazyNumpyImageDataset(
-            X_train, y_train, img_size, normalize_train
+        tr_ix = (
+            None
+            if train_row_indices is None
+            else np.asarray(train_row_indices, dtype=np.int64)
         )
-        val_ds = _LazyNumpyImageDataset(X_val, y_val, img_size, True)
+        va_ix = (
+            None if val_row_indices is None else np.asarray(val_row_indices, dtype=np.int64)
+        )
+        train_ds = _LazyNumpyImageDataset(
+            X_train, y_train, img_size, normalize_train, tr_ix
+        )
+        val_ds = _LazyNumpyImageDataset(X_val, y_val, img_size, True, va_ix)
     else:
         train_t = _to_tensor(X_train, do_normalize=normalize_train)
         val_t = _to_tensor(X_val, do_normalize=True)
