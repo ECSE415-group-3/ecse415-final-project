@@ -28,4 +28,4 @@ torchvision>=0.15
 # Full matrix: https://docs.rapids.ai/install
 
 # Optional: if you download Kaggle data via the Kaggle API
-kaggle>=1.6
+# kaggle>=1.6

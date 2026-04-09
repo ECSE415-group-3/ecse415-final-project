@@ -33,6 +33,9 @@ FIGURES_DIR = OUTPUTS_DIR / "figures"
 MODELS_DIR = OUTPUTS_DIR / "models"
 LOCALIZATION_DIR = OUTPUTS_DIR / "localization"
 
+# Model Names
+OPTION_C_CNN = "option_c_cnn.pth"
+
 # Image sizes.
 IMG_SIZE_CLASSICAL = (128, 128)  # For feature-based / PCA methods
 IMG_SIZE_CNN = (224, 224)        # For pre-trained CNN fine-tuning
