@@ -21,8 +21,11 @@ jupyterlab>=4.0
 ipykernel>=6.0
 
 # Deep learning (CNN fine-tuning for Option C)
-torch>=2.0
+torch>=2.11
 torchvision>=0.15
+
+# Optional: GPU SVC (RAPIDS cuML) — `pip install -r requirements-gpu.txt` (see file header: cu12 vs cu13 vs PyTorch).
+# Full matrix: https://docs.rapids.ai/install
 
 # Optional: if you download Kaggle data via the Kaggle API
 # kaggle>=1.6

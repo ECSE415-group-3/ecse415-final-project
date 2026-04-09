@@ -1,5 +1,6 @@
 # Data
 /data/
+/outputs/cache/
 
 #
 # Basic Python ignore rules

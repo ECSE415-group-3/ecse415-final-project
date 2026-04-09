@@ -1,0 +1,199 @@
+---
+description: Max nesting depth 3; use extraction and inversion to keep code flat (Thomas)
+globs: "**/*.{ipynb,py}"
+alwaysApply: true
+---
+
+# Aesthetic code – nesting and structure
+
+## Rule: maximum nesting level 3
+
+**No block should be nested more than 3 levels deep.** Count every construct that adds one level of indentation. Function and class *definitions* do not count as a nesting level; only the control flow inside them does.
+
+### What counts as nesting (adds one level)
+
+- `for` / `while` loops
+- `if` / `elif` / `else`
+- `try` / `except` / `finally`
+- `with`
+- `match` / `case` (each `case` block)
+
+### What does not count
+
+- The `def` or `class` line itself (the body is at level 1; that’s where you start counting).
+- Normal indentation under a single `if` or loop (that’s level 1 or 2).
+
+### Example of counting
+
+```python
+def process(data):           # def doesn't count
+    for item in data:       # level 1
+        if item.valid:      # level 2
+            for x in item:   # level 3 – OK, at the limit
+                do(x)       # level 4 – too deep
+```
+
+Here the inner `do(x)` is at nesting level 4 (loop → if → loop → body). That violates the rule.
+
+---
+
+## Spacing (blank lines)
+
+Use **one blank line** to separate logical groups so the code is easy to scan. Do not cluster everything into a single block.
+
+### Where to add a blank line
+
+- **Between variable declarations and the next block** (e.g. setup vars, then a blank line, then the loop that uses them).
+- **Between consecutive loops** (e.g. `for lr` block, blank line, next `for seed` or unrelated block).
+- **Before a `return`** when the return is the end of a logical step (e.g. after a short block of work, blank line, then `return result`).
+- **Between a guard clause and the main logic** (e.g. `if not valid: return` then blank line then the rest of the function).
+- **Between functions / classes** – always one blank line between top-level definitions (PEP 8).
+
+### Where not to add extra space
+
+- Between two related lines (e.g. two assignments that form one idea).
+- Between the closing of a block and the next line that is part of the same flow (e.g. `return x` right after the last statement of a branch is fine without a blank before it if the block is short).
+
+### Variable blocks (long declaration sections)
+
+When you have a long run of variable assignments (e.g. at the start of a cell or function), **split them into related groups of at most 6 variables**. Put **one blank line between each group** so the eye can scan by block instead of one long list.
+
+- Group by meaning: e.g. hyperparameters (gamma, epsilon, n_episodes) in one block; structure (lrs, action_set) in another; per-seed setup (env, Q, opt, buffer) in separate blocks.
+- No single block should exceed 6 variable assignments; if you have more, start a new block after the 6th (or earlier if the 7th starts a new logical group).
+
+### Example
+
+```python
+def run_episode(env, step_global):
+    env.reset()
+    ep_rewards = []
+    done = False
+
+    while not done:
+        a = select_action(env.state(), step_global)
+        r, done = env.act(a)
+        ep_rewards.append(r)
+        step_global += 1
+
+    ret = discounted_return(ep_rewards)
+    return ret, step_global
+```
+
+Here: blank after setup (`done = False`), blank before `while`; blank after the loop, then the return computation and return. No blank between the two assignments at the top (one logical group) or between the three lines inside the loop (one step per iteration).
+
+---
+
+## Why keep nesting low
+
+- **Readability**: Deep nesting is hard to scan and understand.
+- **Cognitive load**: Tracking many open blocks makes bugs and refactors harder.
+- **Testability**: Flatter code is easier to split into small, testable helpers.
+
+---
+
+## How to fix: extraction and inversion
+
+Two main ways to reduce nesting:
+
+1. **Extraction** – move inner logic into a helper function (or another named block).
+2. **Inversion** – turn conditions around and exit early (guard clauses) so the “happy path” stays at a lower indent.
+
+### 1. Extraction (helper functions)
+
+Take a deeply nested block and move it into its own function. The outer code stays shallow and reads at a high level; details live in the helper.
+
+**Before (nesting 4):**
+
+```python
+def handle_request(req):
+    if req.is_valid:
+        for item in req.items:
+            if item.active:
+                result = do_work(item)
+                if result.ok:
+                    send(result)
+```
+
+**After (max nesting 2):**
+
+```python
+def handle_request(req):
+    if not req.is_valid:
+        return
+    for item in req.items:
+        process_active_item(item)
+
+
+def process_active_item(item):
+    if not item.active:
+        return
+    result = do_work(item)
+    if result.ok:
+        send(result)
+```
+
+You can also extract the inner loop so the main function only has one level of nesting.
+
+### 2. Inversion (guard clauses, early exit)
+
+Instead of wrapping the main logic in `if condition:`, invert to **if not condition: return (or continue / break)**. The rest of the code stays at the same (lower) indent.
+
+**Before (nested if):**
+
+```python
+def save_user(user):
+    if user is not None:
+        if user.is_valid():
+            if not user.exists_in_db():
+                db.insert(user)
+                return True
+    return False
+```
+
+**After (inversion, flat):**
+
+```python
+def save_user(user):
+    if user is None:
+        return False
+    if not user.is_valid():
+        return False
+    if user.exists_in_db():
+        return False
+    db.insert(user)
+    return True
+```
+
+Same idea in a loop: use `continue` to skip the rest of the iteration and avoid an extra `else` or deep `if`:
+
+**Before:**
+
+```python
+for x in items:
+    if x.valid:
+        # many lines of work
+        ...
+```
+
+**After:**
+
+```python
+for x in items:
+    if not x.valid:
+        continue
+    # many lines of work at base indent
+    ...
+```
+
+---
+
+## Summary
+
+| Problem              | Technique    | Action                                                                 |
+|----------------------|-------------|------------------------------------------------------------------------|
+| Too many nested loops/ifs | **Extraction** | Move inner block into a helper function; call it from the outer scope. |
+| Deep `if` chains     | **Inversion**  | Use `if not ...: return` or `continue`/`break`; keep main path flat.   |
+
+**Rule of thumb:** If you’re about to add a fourth level of indentation (inside a loop, inside an if, inside another loop/if), either extract that block into a function or invert a condition and exit early so you stay at 3 levels or less.
+
+**Spacing:** Use one blank line between logical groups (declarations vs loops, between loops, before a return, after guard clauses). Keep related lines together; separate distinct steps with a blank line. For long variable sections, split into related blocks of **max 6 variables** with a blank line between blocks.
