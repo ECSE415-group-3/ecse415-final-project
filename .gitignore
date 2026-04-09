@@ -1,7 +1,6 @@
 # Data
 /data/
-/outputs/cache/
-
+/outputs/
 #
 # Basic Python ignore rules
 #
